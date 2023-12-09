@@ -45,7 +45,8 @@ def startup(datasette):
                 password_issued_at text,
                 public_key text,
                 private_key text,
-                message_read_at text
+                message_read_at text,
+                wish_list text
             );
         """
             )
@@ -279,6 +280,64 @@ async def generate_password_and_keys_for_user(db, participant_id):
     )
     return password
 
+async def add_wishlist(request, datasette):
+    slug = request.url_vars["slug"]
+    db = datasette.get_database("santa")
+
+    santa = (
+        await db.execute("select * from secret_santa where slug = ?", [slug])
+    ).first()
+
+    if santa is None:
+        return await _error(
+            datasette, request, "Could not find secret santa", status=404
+        )
+
+    participant_id = request.url_vars["id"]
+    participant = (
+        await db.execute(
+            "select * from secret_santa_participants where id = ? and slug = ?",
+            [participant_id, slug],
+        )
+    ).first()
+    if participant is None:
+        return await _error(
+            datasette, request, "Could not find participant", status=404
+        )
+
+    if request.method.lower() != "post":
+        return Response.html(
+            await datasette.render_template(
+                "add_wishlist.html",
+                {"santa": santa, "participant": participant},
+                request=request
+            )
+        )
+    else:
+        data = await request.post_vars()
+        wishlist = data.get("wishlist", "").strip()
+        if not wishlist:
+            return await _error(
+                datasette, request, "Please add your wishlist data", status=400
+            )
+
+        await db.execute_write(
+            "update secret_santa_participants set wish_list = ? where id = ?",
+            [wishlist, participant_id]
+        )
+        return Response.html(
+            await datasette.render_template(
+                "add_wishlist.html",
+                {
+                    "santa": santa,
+                    "participant": participant,
+                    "wish_list": wishlist
+                },
+                request=request
+            )
+        )
+
+
 
 async def assign_participants(request, datasette):
     slug = request.url_vars["slug"]
@@ -359,6 +418,7 @@ def register_routes():
         (r"^/secret-santa/(?P<slug>[^/]+)/assign$", assign_participants),
         (r"^/secret-santa/(?P<slug>[^/]+)/set-password/(?P<id>\d+)$", set_password),
         (r"^/secret-santa/(?P<slug>[^/]+)/reveal/(?P<id>\d+)$", reveal),
+        (r"^/secret-santa/(?P<slug>[^/]+)/add-wishlist/(?P<id>\d+)$", add_wishlist),
         (r"^/secret-santa/?$", redirect_to_home),
     ]
 
